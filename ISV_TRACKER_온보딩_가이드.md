@@ -17,28 +17,21 @@ ISV별 현재 단계, 업무 상태, 최근 활동, 다음 액션을 한곳에�
 
 ## 3. 새로운 ISV 등록 방법
 
-현재 버전에서는 새로운 ISV를 Google Sheets에 먼저 등록합니다. 웹 화면에서 입력한 데이터는 Apps Script를 통해 Sheets에 기록되지만, 신규 ISV 생성 화면은 아직 제공하지 않습니다.
+1. `Partners` 화면에서 `파트너 등록`을 엽니다.
+2. ISV명, Owner, 현재 단계, Next Action, 기한을 입력합니다. Partner ID는 서버에서 자동 발급합니다.
+3. 선택한 단계의 `Stage_Template` 기본 Task가 `Tasks`에 함께 생성됩니다. 각 업무의 기한은 템플릿 SLA를 기준으로 설정됩니다.
+4. 등록을 저장하면 파트너, 기본 업무, 등록 Activity가 Google Sheets에 기록되고, 재조회 확인 후 Overview로 이동합니다.
 
-### 필수 순서
-
-1. `Partners` 탭에 새로운 ISV 행을 추가합니다.
-2. 고유한 `Partner ID`를 부여합니다. 예: `P27-NEWVENDOR`
-3. ISV명, Owner, Current Stage, Last Activity, Next Action, Due Date, Blocker, Segment/Focus를 입력합니다.
-4. `Tasks` 탭에 해당 `Partner ID`의 단계별 업무를 추가합니다.
-5. 필수 업무는 `Required = Y`, 시작 상태는 보통 `Not Started`로 입력합니다.
-6. 첫 미팅·메일·자료 수신 등 실제 변화가 있으면 `Activities` 탭에 기록합니다.
-7. 웹 화면을 새로고침하여 ISV, Progress, Health가 정상 계산되는지 확인합니다.
-
-`Partners`만 추가하고 `Tasks`를 만들지 않으면 Progress가 비어 있거나 잘못 계산될 수 있습니다. `Stage_Template`는 복사할 업무를 확인하는 템플릿이고, 실제 진행 데이터는 `Tasks`에 기록합니다.
+Google Sheets에 연결되지 않았거나 최신 Apps Script가 배포되지 않았다면 등록할 수 없습니다. `GTM Onboarding`은 현재 `Stage_Template`에 기본 Task가 없어 파트너 행과 등록 Activity만 생성됩니다. 해당 단계의 업무 템플릿이 필요하면 담당자가 먼저 Stage_Template에 정의해야 합니다.
 
 ## 4. 매일 사용하는 흐름
 
 1. `Overview`에서 `Needs update`, `Stalled`, `Blocked` 파트너를 먼저 확인합니다.
-2. ISV를 선택하고 `Stage tasks`에서 실제 상태를 변경합니다.
-3. 상태 변경이 끝나면 Progress와 Health가 함께 갱신되는지 확인합니다. Google Sheets 연결 상태이고 최신 Apps Script가 배포되어 있으면 Task Status가 `Tasks`에 저장되고 `Activities`에도 이력이 남습니다.
-4. 새로운 업무 변화가 있으면 `빠른 업데이트`를 열어 활동 요약, Next Action, Due Date, Blocker를 입력합니다.
-5. 저장 후 `Google Sheet 저장 및 재조회 확인` 토스트가 보이는지 확인합니다.
-6. 저장이 의심되면 새로고침 후 해당 ISV의 상태와 `Activities`를 다시 확인합니다.
+2. ISV를 선택하고 `Stage tasks` 또는 `Tasks` 화면에서 상태를 바꿉니다.
+3. 업무별 `진행 입력`을 열어 진행 내용, 상태, 다음 액션, 기한, 대기 상대, 블로커, 근거 링크를 기록합니다.
+4. 저장하면 `Tasks`의 현재 정보가 갱신되고, 각 저장 내용은 `Activities`에 누적됩니다. 오래된 진행 내용도 이력에서 확인할 수 있습니다.
+5. 파트너 전체의 Next Action이나 블로커가 바뀌면 `빠른 업데이트`에서 파트너 수준 정보를 갱신합니다.
+6. 저장 후 확인 메시지를 확인하고, 의심되면 새로고침해 해당 Task와 `Activities`를 다시 확인합니다.
 
 ## 5. Status 입력 기준
 
@@ -87,7 +80,7 @@ Apps Script 배포 권한, URL의 `/exec` 포함 여부, 회사 계정 로그인
 
 ### Task 변경 이력이 Activities에 보이지 않을 때
 
-Apps Script가 최신 버전으로 배포되었는지 확인합니다. 코드를 수정했더라도 기존 웹앱 배포가 이전 버전을 가리키면 Task 상태 변경 Activity가 기록되지 않을 수 있습니다. 배포 후 화면에서 Task 상태를 다시 변경하고 `Tasks`와 `Activities`를 확인합니다.
+Apps Script가 최신 버전으로 배포되었는지 확인합니다. 코드를 수정했더라도 기존 웹앱 배포가 이전 버전을 가리키면 파트너 등록이나 상세 진행 입력, Activity 기록이 실패할 수 있습니다. 배포 후 화면에서 저장하고 `Partners`, `Tasks`, `Activities`를 확인합니다.
 
 ### 상태 변경 후 저장 확인이 지연될 때
 

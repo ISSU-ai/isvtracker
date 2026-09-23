@@ -24,7 +24,7 @@
 5. 실행 주체는 본인, 액세스 권한은 조직 정책에 맞게 설정합니다.
 6. 배포 URL의 `.../exec` 주소를 복사합니다.
 
-Apps Script 코드를 수정한 경우에는 기존 배포의 편집(연필) 메뉴에서 새 버전을 배포해야 변경 내용이 실제 웹앱에 적용됩니다. 기존 배포를 편집해 새 버전을 지정하면 프론트엔드에 설정한 `/exec` URL을 유지할 수 있습니다. 이번 버전은 Task 상태 변경을 `Activities`에도 기록하므로, 이 기능을 적용하려면 Apps Script를 반드시 재배포하세요.
+Apps Script 코드를 수정한 경우에는 기존 배포의 편집(연필) 메뉴에서 새 버전을 배포해야 변경 내용이 실제 웹앱에 적용됩니다. 기존 배포를 편집해 새 버전을 지정하면 프론트엔드에 설정한 `/exec` URL을 유지할 수 있습니다. 웹 파트너 등록과 업무별 진행 내용 저장을 사용하려면 저장소의 최신 `isv-tracker-apps-script.gs`를 반영하고 반드시 새 버전을 배포하세요.
 
 보안상 `모든 사용자` 공개보다 조직 계정 접근을 우선 권장합니다. 외부 사용자까지 접근시켜야 하는 경우에는 Apps Script 웹앱을 공개하기 전에 파트너 개인정보와 쓰기 권한 범위를 별도로 검토해야 합니다.
 
@@ -84,6 +84,8 @@ Vite 환경변수는 정적 JavaScript 번들에 포함되어 브라우저에 �
 - 모든 활성 Partner는 `Next Action`, `Owner`, `Due Date`를 가져야 함
 - `Activities`는 단순 셀 수정이 아니라 실제 업무 변화만 기록
 - 웹 화면의 Task 상태 변경은 `Tasks` 행을 `Task ID`로 찾아 갱신하고, 같은 변경 요약을 `Activities`에 `Other` 유형으로 추가합니다. 템플릿의 Activity Type 드롭다운 허용값을 유지하기 위한 설정입니다.
+- `Partners` 화면의 웹 등록은 고유 Partner ID를 발급하고 현재 단계의 `Stage_Template` Task를 `Tasks`에 생성합니다. Task 진행 입력은 `Tasks`의 Status / Due Date / Next Action / Waiting On / Blocker / Notes / Reference Link를 갱신하고, 매 저장 내용을 `Activities`에 추가합니다.
+- 현재 `Stage_Template`에 `GTM Onboarding` 기본 업무가 없으므로, 이 단계로 등록하면 Task 없이 파트너만 생성됩니다. 기본 업무가 필요하면 먼저 Stage_Template에 추가하세요.
 - 활동 요약은 주간 보고 초안의 근거가 됩니다. 주간 보고는 별도 저장하지 않고, 이번 주 월요일부터 오늘까지의 Activity와 현재 주의 필요 상태를 화면에서 생성합니다.
 
 ## 변경 후 확인
