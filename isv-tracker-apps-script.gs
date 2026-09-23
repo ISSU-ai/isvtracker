@@ -108,11 +108,6 @@ function bootstrap_() {
       waitingOn: task['Waiting On'] || '',
       notes: task.Notes || '',
       referenceLink: task['Reference Link'] || '',
-      nextAction: task['Next Action'] || '',
-      blocker: task.Blocker || '',
-      waitingOn: task['Waiting On'] || '',
-      notes: task.Notes || '',
-      referenceLink: task['Reference Link'] || '',
     }));
     const partnerActivities = (activityByPartner[row['Partner ID']] || []).sort((a, b) => String(b.Date).localeCompare(String(a.Date))).map((activity) => ({
       date: toIso_(activity.Date),
