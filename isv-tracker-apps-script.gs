@@ -42,8 +42,10 @@ function doGet(e) {
     const action = (e && e.parameter && e.parameter.action) || 'health';
     let payload;
     if (action === 'bootstrap') payload = bootstrap_();
+    else if (action === 'createPartner') payload = withLock_(() => createPartner_(e.parameter || {}));
     else if (action === 'activity') payload = withLock_(() => appendActivity_(e.parameter || {}));
     else if (action === 'updateTaskStatus') payload = withLock_(() => updateTaskStatus_(e.parameter || {}));
+    else if (action === 'updateTaskDetails') payload = withLock_(() => updateTaskDetails_(e.parameter || {}));
     else payload = { status: 'ok', service: 'isv-partner-ops', sheetId: ISV_TRACKER_SHEET_ID };
     return output_(payload, e);
   } catch (error) {
@@ -62,7 +64,9 @@ function doPost(e) {
     const payload = JSON.parse(rawPayload);
     return json_(withLock_(() => {
       if (payload.action === 'activity') return appendActivity_(payload);
+      if (payload.action === 'createPartner') return createPartner_(payload);
       if (payload.action === 'updateTaskStatus') return updateTaskStatus_(payload);
+      if (payload.action === 'updateTaskDetails') return updateTaskDetails_(payload);
       return { status: 'error', message: 'Unknown action' };
     }));
   } catch (error) {
@@ -85,6 +89,7 @@ function bootstrap_() {
   const partners = readRows_(ss.getSheetByName(ISV_TRACKER_TABS.partners));
   const tasks = readRows_(ss.getSheetByName(ISV_TRACKER_TABS.tasks));
   const activities = readRows_(ss.getSheetByName(ISV_TRACKER_TABS.activities));
+  const stageTemplates = readRows_(ss.getSheetByName('Stage_Template'));
   const stageIndex = { Intake: 1, 'Qualification Card': 2, NDA: 3, 'Partner Agreement': 4, 'GTM Onboarding': 5 };
 
   const taskByPartner = groupBy_(tasks, 'Partner ID');
@@ -97,6 +102,17 @@ function bootstrap_() {
       status: task.Status || 'Not Started',
       due: toIso_(task['Due Date']),
       lastUpdated: toIso_(task['Last Updated']),
+      owner: task.Owner || '',
+      nextAction: task['Next Action'] || '',
+      blocker: task.Blocker || '',
+      waitingOn: task['Waiting On'] || '',
+      notes: task.Notes || '',
+      referenceLink: task['Reference Link'] || '',
+      nextAction: task['Next Action'] || '',
+      blocker: task.Blocker || '',
+      waitingOn: task['Waiting On'] || '',
+      notes: task.Notes || '',
+      referenceLink: task['Reference Link'] || '',
     }));
     const partnerActivities = (activityByPartner[row['Partner ID']] || []).sort((a, b) => String(b.Date).localeCompare(String(a.Date))).map((activity) => ({
       date: toIso_(activity.Date),
@@ -119,7 +135,130 @@ function bootstrap_() {
       activities: partnerActivities,
     };
   });
-  return { status: 'ok', partners: result, generatedAt: new Date().toISOString() };
+  const stageTaskCounts = stageTemplates.reduce((counts, row) => {
+    const stage = String(row.Stage || '').trim();
+    if (stage) counts[stage] = (counts[stage] || 0) + 1;
+    return counts;
+  }, {});
+  return { status: 'ok', partners: result, stageTaskCounts, generatedAt: new Date().toISOString() };
+}
+
+function createPartner_(payload) {
+  const name = String(payload.name || '').trim();
+  const owner = String(payload.owner || '').trim();
+  const stage = String(payload.stage || 'Intake').trim();
+  const nextAction = String(payload.nextAction || '').trim();
+  const nextActionDue = String(payload.nextActionDue || '').trim();
+  const stages = ['Intake', 'Qualification Card', 'NDA', 'Partner Agreement', 'GTM Onboarding'];
+  if (!name || !owner || !nextAction || !nextActionDue) throw new Error('ISV명, Owner, Next Action, 기한은 필수입니다.');
+  if (stages.indexOf(stage) < 0) throw new Error('지원하지 않는 Stage입니다.');
+
+  const ss = SpreadsheetApp.openById(ISV_TRACKER_SHEET_ID);
+  const partnersSheet = ss.getSheetByName(ISV_TRACKER_TABS.partners);
+  const existing = readRows_(partnersSheet);
+  if (existing.some((row) => String(row['ISV Name'] || '').trim().toLowerCase() === name.toLowerCase())) {
+    throw new Error('같은 이름의 ISV가 이미 등록되어 있습니다.');
+  }
+  const partnerId = nextPartnerId_(existing);
+  const now = new Date();
+  const partnerHeaders = headerMap_(partnersSheet);
+  const partnerRow = Array(partnersSheet.getLastColumn()).fill('');
+  setCell_(partnerRow, partnerHeaders, 'Partner ID', partnerId);
+  setCell_(partnerRow, partnerHeaders, 'ISV Name', name);
+  setCell_(partnerRow, partnerHeaders, 'Segment / Focus', String(payload.segment || '').trim());
+  setCell_(partnerRow, partnerHeaders, 'Location', String(payload.location || '').trim());
+  setCell_(partnerRow, partnerHeaders, 'Owner', owner);
+  setCell_(partnerRow, partnerHeaders, 'ISV Contact', String(payload.contact || '').trim());
+  setCell_(partnerRow, partnerHeaders, 'Lead Source', String(payload.leadSource || '').trim());
+  setCell_(partnerRow, partnerHeaders, 'Current Stage', stage);
+  setCell_(partnerRow, partnerHeaders, 'Overall Status', 'Active');
+  setCell_(partnerRow, partnerHeaders, 'Last Activity', now);
+  setCell_(partnerRow, partnerHeaders, 'Next Action', nextAction);
+  setCell_(partnerRow, partnerHeaders, 'Next Action Due', parseDate_(nextActionDue));
+  setCell_(partnerRow, partnerHeaders, 'Blocker', String(payload.blocker || '').trim());
+  const partnerRowNumber = appendRowWithTemplate_(partnersSheet, partnerRow, 2);
+  [9, 10, 12].forEach((column) => {
+    partnersSheet.getRange(2, column).copyTo(
+      partnersSheet.getRange(partnerRowNumber, column),
+      SpreadsheetApp.CopyPasteType.PASTE_FORMULA,
+      false,
+    );
+  });
+
+  const taskCount = createStageTasks_(ss, partnerId, stage, owner, now);
+  appendRegistrationActivity_(ss, partnerId, payload, now);
+  updatePartnerLastActivity_(ss, partnerId, now);
+  return { status: 'ok', action: 'createPartner', partnerId, taskCount };
+}
+
+function nextPartnerId_(partners) {
+  const highest = partners.reduce((max, row) => {
+    const match = String(row['Partner ID'] || '').match(/^P(\d+)(?:-|$)/i);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  return 'P' + (highest + 1);
+}
+
+function createStageTasks_(ss, partnerId, stage, owner, createdAt) {
+  const templateRows = readRows_(ss.getSheetByName('Stage_Template'))
+    .filter((row) => String(row.Stage || '').trim() === stage);
+  const tasksSheet = ss.getSheetByName(ISV_TRACKER_TABS.tasks);
+  const headers = headerMap_(tasksSheet);
+  const stageCode = { Intake: 'INT', 'Qualification Card': 'QUAL', NDA: 'NDA', 'Partner Agreement': 'AGR', 'GTM Onboarding': 'GTM' }[stage];
+  templateRows.forEach((template) => {
+    const taskNo = String(template['Task No'] || '').trim();
+    const slaDays = Number(template['Default SLA Days']) || 0;
+    const due = new Date(createdAt);
+    due.setDate(due.getDate() + slaDays);
+    const row = Array(tasksSheet.getLastColumn()).fill('');
+    setCell_(row, headers, 'Task ID', `${partnerId}-${stageCode}-${taskNo.padStart(2, '0')}`);
+    setCell_(row, headers, 'Partner ID', partnerId);
+    setCell_(row, headers, 'Stage', stage);
+    setCell_(row, headers, 'Task No', taskNo);
+    setCell_(row, headers, 'Task Name', template['Task Name'] || '');
+    setCell_(row, headers, 'Required', template.Required === 'Y' ? 'Y' : 'N');
+    setCell_(row, headers, 'Owner', owner);
+    setCell_(row, headers, 'Status', 'Not Started');
+    setCell_(row, headers, 'Due Date', due);
+    setCell_(row, headers, 'Last Updated', createdAt);
+    setCell_(row, headers, 'Notes', template.Notes || '');
+    appendRowWithTemplate_(tasksSheet, row, 2);
+  });
+  return templateRows.length;
+}
+
+function appendRegistrationActivity_(ss, partnerId, payload, date) {
+  const sheet = ss.getSheetByName(ISV_TRACKER_TABS.activities);
+  const headers = headerMap_(sheet);
+  const row = Array(sheet.getLastColumn()).fill('');
+  setCell_(row, headers, 'Activity ID', 'ACT-' + Utilities.getUuid().slice(0, 8).toUpperCase());
+  setCell_(row, headers, 'Partner ID', partnerId);
+  setCell_(row, headers, 'Date', date);
+  setCell_(row, headers, 'Activity Type', 'Other');
+  setCell_(row, headers, 'Summary', String(payload.registrationNote || '').trim() || '웹 입력 화면에서 파트너 등록');
+  setCell_(row, headers, 'Next Action', String(payload.nextAction || '').trim());
+  setCell_(row, headers, 'Next Action Owner', String(payload.owner || '').trim());
+  setCell_(row, headers, 'Next Action Due', parseDate_(payload.nextActionDue));
+  setCell_(row, headers, 'Blocker', String(payload.blocker || '').trim());
+  setCell_(row, headers, 'Created By', String(payload.owner || '').trim());
+  appendRowWithTemplate_(sheet, row, 2);
+}
+
+function appendRowWithTemplate_(sheet, row, templateRow) {
+  sheet.appendRow(row);
+  const rowNumber = sheet.getLastRow();
+  const width = sheet.getLastColumn();
+  const template = sheet.getRange(templateRow, 1, 1, width);
+  const target = sheet.getRange(rowNumber, 1, 1, width);
+  template.copyTo(target, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  template.copyTo(target, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+  return rowNumber;
+}
+
+function parseDate_(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw new Error('날짜는 YYYY-MM-DD 형식이어야 합니다.');
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 }
 
 function appendActivity_(payload) {
@@ -164,22 +303,86 @@ function updateTaskStatus_(payload) {
   const sheetRow = rowIndex + 2;
   sheet.getRange(sheetRow, statusIndex + 1).setValue(payload.status || 'Not Started');
   if (updatedIndex >= 0) sheet.getRange(sheetRow, updatedIndex + 1).setValue(new Date());
-  appendTaskStatusActivity_(ss, payload);
+  appendTaskStatusActivity_(ss, payload, values[rowIndex][taskNameIndex]);
   return { status: 'ok', action: 'updateTaskStatus', taskName: payload.taskName };
 }
 
-function appendTaskStatusActivity_(ss, payload) {
+function updateTaskDetails_(payload) {
+  const progressNote = String(payload.progressNote || '').trim();
+  if (!progressNote) throw new Error('진행 내용은 필수입니다.');
+  const ss = SpreadsheetApp.openById(ISV_TRACKER_SHEET_ID);
+  const sheet = ss.getSheetByName(ISV_TRACKER_TABS.tasks);
+  const values = sheet.getDataRange().getValues();
+  const headers = values.shift();
+  const partnerIndex = headers.indexOf('Partner ID');
+  const taskIdIndex = headers.indexOf('Task ID');
+  const rowIndex = values.findIndex((row) => String(row[partnerIndex]) === String(payload.partnerId)
+    && String(row[taskIdIndex]) === String(payload.taskId));
+  if (rowIndex < 0) throw new Error('Task not found');
+  const rowNumber = rowIndex + 2;
+  const read = (name) => headers.indexOf(name);
+  const write = (name, value) => {
+    const index = read(name);
+    if (index >= 0) sheet.getRange(rowNumber, index + 1).setValue(value);
+  };
+  const now = new Date();
+  write('Status', String(payload.status || 'Not Started'));
+  write('Due Date', parseDate_(payload.dueDate));
+  write('Last Updated', now);
+  write('Next Action', String(payload.nextAction || '').trim());
+  write('Waiting On', String(payload.waitingOn || '').trim());
+  write('Blocker', String(payload.blocker || '').trim());
+  write('Notes', progressNote);
+  write('Reference Link', String(payload.referenceLink || '').trim());
+  const taskName = values[rowIndex][headers.indexOf('Task Name')];
+  appendTaskStatusActivity_(ss, {
+    ...payload,
+    activitySummary: `[${taskName}] ${progressNote}${payload.nextAction ? ' · 다음 액션: ' + String(payload.nextAction).trim() : ''}`,
+  }, taskName, now);
+  updatePartnerTaskBlocker_(ss, payload.partnerId, values[rowIndex][headers.indexOf('Blocker')], String(payload.blocker || '').trim());
+  return { status: 'ok', action: 'updateTaskDetails', taskId: payload.taskId };
+}
+
+function appendTaskStatusActivity_(ss, payload, taskName, date) {
   const sheet = ss.getSheetByName(ISV_TRACKER_TABS.activities);
   const headers = headerMap_(sheet);
   const row = Array(sheet.getLastColumn()).fill('');
   setCell_(row, headers, 'Activity ID', 'ACT-' + Utilities.getUuid().slice(0, 8).toUpperCase());
   setCell_(row, headers, 'Partner ID', payload.partnerId || '');
-  setCell_(row, headers, 'Date', new Date());
+  setCell_(row, headers, 'Date', date || new Date());
   // The template validation list permits Email, Meeting, Call, Portal, Internal, Other.
   setCell_(row, headers, 'Activity Type', 'Other');
-  setCell_(row, headers, 'Summary', payload.activitySummary || (payload.taskName + ' 상태를 ' + (payload.status || 'Not Started') + '(으)로 변경'));
+  setCell_(row, headers, 'Summary', payload.activitySummary || ('[' + (taskName || payload.taskName) + '] 상태를 ' + (payload.status || 'Not Started') + '(으)로 변경'));
+  setCell_(row, headers, 'Next Action', String(payload.nextAction || '').trim());
+  setCell_(row, headers, 'Next Action Owner', String(payload.createdBy || '').trim());
+  if (payload.dueDate) setCell_(row, headers, 'Next Action Due', parseDate_(payload.dueDate));
   setCell_(row, headers, 'Created By', payload.createdBy || '');
-  sheet.appendRow(row);
+  appendRowWithTemplate_(sheet, row, 2);
+  updatePartnerLastActivity_(ss, payload.partnerId, date || new Date());
+}
+
+function updatePartnerLastActivity_(ss, partnerId, date) {
+  const sheet = ss.getSheetByName(ISV_TRACKER_TABS.partners);
+  const values = sheet.getDataRange().getValues();
+  const headers = values.shift();
+  const idIndex = headers.indexOf('Partner ID');
+  const lastActivityIndex = headers.indexOf('Last Activity');
+  const rowIndex = values.findIndex((row) => String(row[idIndex]) === String(partnerId));
+  if (rowIndex >= 0 && lastActivityIndex >= 0) sheet.getRange(rowIndex + 2, lastActivityIndex + 1).setValue(date || new Date());
+}
+
+function updatePartnerTaskBlocker_(ss, partnerId, previousTaskBlocker, nextTaskBlocker) {
+  const sheet = ss.getSheetByName(ISV_TRACKER_TABS.partners);
+  const values = sheet.getDataRange().getValues();
+  const headers = values.shift();
+  const idIndex = headers.indexOf('Partner ID');
+  const blockerIndex = headers.indexOf('Blocker');
+  const rowIndex = values.findIndex((row) => String(row[idIndex]) === String(partnerId));
+  if (rowIndex < 0 || blockerIndex < 0) return;
+  const cell = sheet.getRange(rowIndex + 2, blockerIndex + 1);
+  const current = String(values[rowIndex][blockerIndex] || '').trim();
+  if (nextTaskBlocker) cell.setValue(nextTaskBlocker);
+  else if (previousTaskBlocker && current === String(previousTaskBlocker).trim()) cell.clearContent();
 }
 
 function updatePartnerSummary_(ss, partnerId, update) {
